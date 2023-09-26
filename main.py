@@ -1,114 +1,85 @@
-# This module is only going to make API calls make a list of all the fixed vulnerabilities that it can see from the Acunetix API Call
 import json
 import os
 import requests
+from configparser import ConfigParser
 
 
 class API:
-    def __init__(self):
-        headers = {
-            'Accept': 'application/json',
-            'X-Auth': '<add api key here>',
-        }
-        r = requests.get('https://10.250.0.72:3443/api/v1/vulnerabilities', headers=headers,
-                         verify=False)
-        vulnerabilities = r.json()['vulnerabilities']
-        fixed_vids_files = f"/opt/wazuh_logging/acunetix/Fixed_vulnerabilities.txt"
-        active_vulnerabilities_id = "/opt/wazuh_logging/acunetix/active_vulnerabilities_id.txt"
-        logfile = "/opt/wazuh_logging/acunetix/notfixed/notfixed_vuln.log"
-        fixed_vulns = "/opt/wazuh_logging/acunetix/fixed/fixed_vuln.log"
-        if os.path.isfile(logfile):
-            os.remove(logfile)
-        if os.path.isfile(fixed_vulns):
-            os.remove(fixed_vulns)
-        self.fixed_vids_files = fixed_vids_files
-        self.logfile = logfile
-        self.fixed_vulns = fixed_vulns
+    """
+    A class to interact with Acunetix API and gather information about vulnerabilities.
+    """
+
+    def __init__(self, config_file: str):
+        """
+        Initializes the API object with configurations from a file and fetches the vulnerabilities.
+        
+        :param config_file: Path to the configuration file containing necessary parameters.
+        """
+        # Loading configurations from the configuration file
+        config = ConfigParser()
+        config.read(config_file)
+
+        # Setting headers and fetching vulnerabilities from the Acunetix API
+        headers = {'Accept': 'application/json', 'X-Auth': config.get('Acunetix', 'api_key')}
+        url = config.get('Acunetix', 'url')
+        r = requests.get(url, headers=headers, verify=False)
+        vulnerabilities = r.json().get('vulnerabilities', [])
+
+        # Assigning configuration paths to instance variables
+        self.fixed_vids_files = config.get('Acunetix', 'fixed_vids_files')
+        self.active_vulnerabilities_id = config.get('Acunetix', 'active_vulnerabilities_id')
+        self.logfile = config.get('Acunetix', 'logfile')
+        self.fixed_vulns = config.get('Acunetix', 'fixed_vulns')
         self.vulnerabilities = vulnerabilities
-        self.active_vulnerabilities_id = active_vulnerabilities_id
 
     def get_fixed_vulnerabilities(self):
-        fixed_vulns = self.fixed_vulns
-        fixed_vids_files = self.fixed_vids_files
-        vulnerabilities = self.vulnerabilities
-        if os.path.isfile(fixed_vids_files):
-            # logic to get the old vt_ids
-            vid_list = []
-            with open(fixed_vids_files, "r") as fixed_vid:
-                vid = fixed_vid.readlines()
-                if os.path.isfile(fixed_vulns):
-                    print("true")
-                    os.remove(fixed_vulns)
-                for line in vid:
-                    vid_list.append(line.replace("\n", ""))
-            # once the list of old vuln list is generated it will be comapred with the new list to make sure we do not write any new vulns down
-            with open(fixed_vulns, 'x') as logs_file:
-                for vulnerability in vulnerabilities:
-                    if vulnerability["vuln_id"] not in vid_list:
-                        if vulnerability["status"] == "fixed":
-                            with open(fixed_vulns, "a") as write_file:
-                                vulnerability['Log_type'] = 'acunetix'
-                                json.dump(vulnerability, write_file)
-                                write_file.write('\n')
-                            with open(fixed_vids_files, "a") as write_file:
-                                write_file.write(vulnerability["vuln_id"] + "\n")
+        """
+        Identifies and logs the newly fixed vulnerabilities.
+        """
+        # Reads existing fixed vulnerabilities ids
+        vid_list = []
+        if os.path.isfile(self.fixed_vids_files):
+            with open(self.fixed_vids_files, "r") as fixed_vid:
+                vid_list = [line.strip() for line in fixed_vid.readlines()]
 
-        else:
-            with open(fixed_vulns, 'x') as logs_file:
-                with open(fixed_vids_files, 'x') as fixed_vuln_file:
-                    for vulnerability in vulnerabilities:
-                        if vulnerability["status"] == "fixed":
-                            with open(fixed_vulns, "a") as write_file:
-                                vulnerability['Log_type'] = 'acunetix'
-                                json.dump(vulnerability, write_file)
-                                write_file.write('\n')
-                            with open(fixed_vids_files, "a") as write_file:
-                                write_file.write(vulnerability["vuln_id"] + "\n")
+        # Logs newly fixed vulnerabilities and updates the list of fixed vulnerability ids
+        with open(self.fixed_vulns, 'a') as logs_file, open(self.fixed_vids_files, "a") as vid_file:
+            for vulnerability in self.vulnerabilities:
+                if vulnerability["vuln_id"] not in vid_list and vulnerability["status"] == "fixed":
+                    vulnerability['Log_type'] = 'acunetix'
+                    json.dump(vulnerability, logs_file)
+                    logs_file.write('\n')
+                    vid_file.write(vulnerability["vuln_id"] + "\n")
 
     def get_not_fixed_vulnerabilities(self):
-        active_vulnerabilities_id = self.active_vulnerabilities_id
-        vulnerabilities = self.vulnerabilities
-        logfile = self.logfile
-        if os.path.isfile(logfile):
-            print("true")
-            os.remove(logfile)
-        if os.path.isfile(active_vulnerabilities_id):
-            # logic to get the old vt_ids
-            vid_list = []
-            with open(active_vulnerabilities_id, "r") as active_vid:
-                vid = active_vid.readlines()
-                for line in vid:
-                    vid_list.append(line.replace("\n", ""))
-            # once the list of old vuln list is generated it will be comapred with the new list to make sure we do not write any new vulns down
-            with open(logfile, 'x') as logs_file:
-                for vulnerability in vulnerabilities:
-                    print(type(vulnerability))
-                    if vulnerability["vuln_id"] not in vid_list:
-                        if vulnerability["status"] != "fixed":
-                            with open(logfile, "a") as write_file:
-                                vulnerability['Log_type'] = 'acunetix'
-                                json.dump(vulnerability, write_file)
-                                write_file.write('\n')
-                            with open(active_vulnerabilities_id, "a") as write_file:
-                                write_file.write(vulnerability["vuln_id"] + "\n")
-        else:
-            with open(logfile, 'x') as logs_file:
-                with open(active_vulnerabilities_id, 'x') as logs_text_file:
-                    for vulnerability in vulnerabilities:
-                        if vulnerability["status"] != "fixed":
-                            with open(logfile, "a") as write_file:
-                                print(type(vulnerability))
-                                vulnerability['Log_type'] = 'acunetix'
-                                json.dump(vulnerability, write_file)
-                                write_file.write('\n')
-                            with open(active_vulnerabilities_id, "a") as write_file:
-                                write_file.write(vulnerability["vuln_id"] + "\n")
+        """
+        Identifies and logs the vulnerabilities that are not fixed.
+        """
+        # Reads existing not fixed vulnerabilities ids
+        vid_list = []
+        if os.path.isfile(self.active_vulnerabilities_id):
+            with open(self.active_vulnerabilities_id, "r") as active_vid:
+                vid_list = [line.strip() for line in active_vid.readlines()]
+
+        # Logs newly found not fixed vulnerabilities and updates the list of not fixed vulnerability ids
+        with open(self.logfile, 'a') as logs_file, open(self.active_vulnerabilities_id, "a") as vid_file:
+            for vulnerability in self.vulnerabilities:
+                if vulnerability["vuln_id"] not in vid_list and vulnerability["status"] != "fixed":
+                    vulnerability['Log_type'] = 'acunetix'
+                    json.dump(vulnerability, logs_file)
+                    logs_file.write('\n')
+                    vid_file.write(vulnerability["vuln_id"] + "\n")
 
 
 def main():
-    lets_run_it = API()
-    lets_run_it.get_fixed_vulnerabilities()
-    lets_run_it.get_not_fixed_vulnerabilities()
+    """
+    The main function to run the API calls and associated methods.
+    """
+    acunetix_api = API('key.cfg')
+    acunetix_api.get_fixed_vulnerabilities()
+    acunetix_api.get_not_fixed_vulnerabilities()
 
 
-main()
+if __name__ == "__main__":
+    main()
+
